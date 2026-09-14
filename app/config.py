@@ -5,7 +5,7 @@ class Settings(BaseSettings):
 
     # --- llm providers (all speak the OpenAI protocol; swap via env only) ---
     llm_provider: str = "gemini"          # gemini | groq | openai | openrouter | ollama
-    llm_model: str = "gemini-2.0-flash"
+    llm_model: str = "gemini-3.6-flash"
     gemini_api_key: str = ""
     groq_api_key: str = ""
     openai_api_key: str = ""
