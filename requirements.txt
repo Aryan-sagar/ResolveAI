@@ -1,0 +1,12 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.7
+pydantic-settings>=2.2
+sqlalchemy>=2.0
+openai>=1.30
+qdrant-client>=1.9
+rank-bm25>=0.2.2
+streamlit>=1.35
+requests>=2.31
+pypdf>=4.0
+sentence-transformers>=2.7
