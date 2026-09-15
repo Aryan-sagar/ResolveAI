@@ -37,3 +37,23 @@ class ChatResponse(BaseModel):
 class FeedbackRequest(BaseModel):
     conversation_id: str
     rating: int  # 1 helpful, -1 not helpful
+
+class RetrievedChunk(BaseModel):
+    source: str
+    score: Optional[float] = None
+    content: str = ""
+
+class ChatResponse(BaseModel):
+    conversation_id: str
+    answer: str
+    intent: Optional[str] = None
+    rewritten_query: Optional[str] = None
+    citations: list[Citation] = []
+    invalid_citations: list[int] = []
+    retrieved: list[RetrievedChunk] = []
+    tool_calls: list[ToolCallInfo] = []
+    requires_approval: bool = False
+    proposed_action: Optional[ProposedAction] = None
+    latency_ms: int = 0
+    timings: dict[str, int] = {}
+    guardrail: Optional[str] = None
