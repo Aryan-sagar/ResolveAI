@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from qdrant_client.models import Optional
 from sqlalchemy import String, Text, Integer, DateTime, ForeignKey, JSON
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -29,6 +30,8 @@ class Conversation(Base):
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(40), index=True)
     tenant_id: Mapped[str] = mapped_column(String(50))
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    summarized_up_to: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 class Message(Base):

@@ -39,5 +39,9 @@ class Settings(BaseSettings):
     rerank_model_cohere: str = "rerank-v3.5"
 
     query_rewrite_enabled: bool = True
+    
+    # memory / summarization
+    summary_trigger_messages: int = 10   # unsummarized messages before rolling summarize
+    summary_keep_recent: int = 6         # messages always kept verbatim
 
 settings = Settings()
