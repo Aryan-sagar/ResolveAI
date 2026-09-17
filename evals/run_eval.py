@@ -22,6 +22,7 @@ HERE = Path(__file__).parent
 def apply_variant(variant, rerank):
     settings.retrieval_mode = "vector" if variant == "vector" else "hybrid"
     settings.query_rewrite_enabled = variant == "full"
+    settings.cache_enabled = False
     provider = "none" if variant in ("vector", "hybrid") else rerank
     settings.rerank_provider = provider
     retriever.reranker = make_reranker(provider)
