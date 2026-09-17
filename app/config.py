@@ -44,4 +44,10 @@ class Settings(BaseSettings):
     summary_trigger_messages: int = 10   # unsummarized messages before rolling summarize
     summary_keep_recent: int = 6         # messages always kept verbatim
 
+    # langfuse (empty keys = tracing disabled, system runs fine)
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_host: str = "http://localhost:3000"
+
+    
 settings = Settings()
