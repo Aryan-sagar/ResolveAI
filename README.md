@@ -1,671 +1,195 @@
 # ResolveAI
 
-> Production-grade AI support operations assistant built with FastAPI, RAG, tool calling, guardrails, human approval workflows, and LLM-based evaluation.
+> A production-oriented AI support platform: RAG, tool calling, conversation memory, safety controls, evaluation, and observability — built to explore where these systems actually break.
 
-ResolveAI is an AI-powered customer support system designed to handle both **knowledge-based questions** and **operational support workflows**.
+Most "chat with your documents" demos stop at retrieval + generation. ResolveAI goes further: it retrieves knowledge, calls real tools, gates risky actions behind human approval, protects sensitive data, caches semantically, and traces every stage so a bad answer is debuggable instead of mysterious.
 
-Instead of treating support as a simple chatbot, ResolveAI separates routing, retrieval, reasoning, tool execution, risk assessment, and evaluation into explicit stages.
+This README covers what I built, why, what works, and what doesn't — the trade-offs, not just the feature list.
 
 ---
 
-## What It Does
+## Why
 
-ResolveAI can:
+A basic support chatbot is `User → LLM → Answer`. A useful one has to answer harder questions:
 
-- Answer policy and FAQ questions using Retrieval-Augmented Generation (RAG)
-- Retrieve and rerank relevant knowledge-base documents
-- Understand multi-turn conversations and rewrite follow-up queries
-- Check live order information through tools
-- Create and manage support tickets
-- Handle refund workflows with approval gates
-- Block prompt-injection and unsafe requests
-- Generate grounded answers with source citations
-- Detect invalid/hallucinated citation references
-- Track per-stage latency
-- Evaluate different retrieval configurations using a golden dataset
-- Use an LLM judge to measure faithfulness, relevance, and context precision
+- What should be retrieved, and what happens when retrieval is wrong?
+- What happens when the model wants to do something destructive?
+- How do you preserve context without resending the whole conversation?
+- How do you know *why* a response was produced?
+- How do you evaluate changes without cache contamination?
+- How do you keep sensitive data out of prompts, logs, and traces?
+
+ResolveAI is built around answering those, not around demoing an LLM.
 
 ---
 
 ## Architecture
 
 ```text
-                         ┌──────────────────────┐
-                         │      Client/API       │
-                         └──────────┬───────────┘
-                                    │
-                                    ▼
-                         ┌──────────────────────┐
-                         │     Input Guardrail  │
-                         └──────────┬───────────┘
-                                    │
-                                    ▼
-                         ┌──────────────────────┐
-                         │ Conversation History│
-                         └──────────┬───────────┘
-                                    │
-                                    ▼
-                         ┌──────────────────────┐
-                         │   Query Rewriter     │
-                         │  (follow-up queries) │
-                         └──────────┬───────────┘
-                                    │
-                                    ▼
-                         ┌──────────────────────┐
-                         │      Intent Router   │
-                         └───────┬───────┬──────┘
-                                 │       │
-                    requires RAG │       │ requires API
-                                 ▼       ▼
-                    ┌──────────────┐   ┌──────────────┐
-                    │ Hybrid RAG   │   │ Tool System  │
-                    │              │   │              │
-                    │ Vector       │   │ Orders       │
-                    │ BM25         │   │ Tickets      │
-                    │ RRF          │   │ CRM          │
-                    │ Reranking    │   │ Refunds      │
-                    └──────┬───────┘   └──────┬───────┘
-                           │                  │
-                           └────────┬─────────┘
-                                    ▼
-                         ┌──────────────────────┐
-                         │     LLM Orchestrator │
-                         │  Reason + Tool Loop  │
-                         └──────────┬───────────┘
-                                    │
-                         ┌──────────▼───────────┐
-                         │ Risk / Approval Gate │
-                         └──────────┬───────────┘
-                                    │
-                                    ▼
-                         ┌──────────────────────┐
-                         │ Grounded Response +  │
-                         │ Citations + Metadata │
-                         └──────────────────────┘
-````
+User → PII handling → Query rewrite (+ memory) → Intent router
+                                                        │
+                                    ┌───────────────────┼───────────────────┐
+                                    ▼                    ▼                   ▼
+                                RAG path            Tool path          Simple response
+                                    │                    │
+                              Retrieve+Rerank      Preflight+Risk check
+                                    │                    │
+                                    └─────────┬──────────┘
+                                               ▼
+                                              LLM
+                                     ┌─────────┴─────────┐
+                                     ▼                    ▼
+                                  Answer              Human approval → Execute
+```
+
+Everything above is wrapped in Langfuse tracing, with a no-op fallback so observability can never take the request path down.
 
 ---
 
-## Core Design
-
-### 1. Input Guardrails
-
-Unsafe or malicious requests are checked before they reach the LLM.
-
-Examples include:
-
-* Prompt injection
-* Requests to reveal system instructions
-* Requests for unauthorized customer data
-* Requests involving sensitive information
-
-The system fails closed for blocked requests.
-
----
-
-### 2. Conversation-Aware Query Rewriting
-
-Follow-up questions often lack enough context for retrieval.
-
-For example:
-
-```text
-User: Where is my order ORD456?
-
-Assistant: Your order has shipped.
-
-User: Can I track it?
-```
-
-The retriever receives a standalone query such as:
-
-```text
-Where is my order ORD456?
-```
-
-while the LLM still receives the original conversation.
-
-This separates **retrieval optimization** from **conversation semantics**.
-
----
-
-### 3. Intent Routing
-
-Every request is classified into an explicit support intent:
-
-```text
-policy_question
-order_status
-refund_request
-complaint
-ticket_request
-callback_request
-account_question
-out_of_scope
-unsafe
-```
-
-The router also determines:
-
-```text
-requires_rag
-requires_api
-risk_level
-entities
-```
-
-Few-shot examples are used to improve routing accuracy for ambiguous support requests.
-
----
-
-### 4. Hybrid Retrieval
-
-ResolveAI supports configurable retrieval modes:
-
-```text
-Vector
-Hybrid
-```
-
-Hybrid retrieval combines:
-
-* Dense vector search using Qdrant
-* BM25 lexical search
-* Reciprocal Rank Fusion (RRF)
-
-The retrieval pipeline is:
-
-```text
-Query
-  │
-  ├── Vector Search
-  │
-  └── BM25 Search
-          │
-          ▼
-      RRF Fusion
-          │
-       Top-N
-          │
-          ▼
-      Reranking
-          │
-          ▼
-       Top-K
-```
-
----
-
-### 5. Configurable Reranking
-
-The reranking layer supports:
-
-```text
-none
-local
-cohere
-```
-
-The `none` provider acts as the baseline control group.
-
-The local implementation uses a cross-encoder and loads lazily so application startup remains fast.
-
-This allows experiments such as:
-
-```text
-Hybrid
-vs
-Hybrid + Reranking
-```
-
-without changing the retrieval implementation.
-
----
-
-### 6. Tool Calling
-
-The LLM can invoke structured support tools for operations that cannot be answered reliably from static documentation.
-
-Examples:
-
-```text
-get_order_status
-create_ticket
-get_customer
-add_crm_note
-issue_refund
-request_callback
-```
-
-Tools are executed through a controlled tool layer rather than allowing the model to directly access backend systems.
-
----
-
-### 7. Human Approval for High-Risk Actions
-
-Sensitive actions do not execute blindly.
-
-For example:
-
-```text
-Refund request
-      │
-      ▼
-Verify order
-      │
-      ▼
-Check policy
-      │
-      ▼
-Determine risk
-      │
-      ▼
-Approval required?
-      │
-     YES
-      │
-      ▼
-Pending approval
-```
-
-The assistant never falsely claims that a pending refund has already been completed.
-
----
-
-### 8. Citation Validation
-
-Generated answers can reference retrieved chunks:
-
-```text
-According to the refund policy, damaged items must be
-reported within 7 days [1].
-```
-
-ResolveAI validates the citation references against the retrieved context.
-
-Invalid references are exposed separately:
-
-```json
-{
-  "citations": [...],
-  "invalid_citations": []
-}
-```
-
-This makes citation hallucinations measurable instead of silently ignoring them.
-
----
-
-## Evaluation
-
-ResolveAI includes an evaluation harness with a **31-question golden dataset** covering:
-
-* Policy questions
-* Order status
-* Refund requests
-* Ticket creation
-* Complaints
-* Prompt injection
-* Out-of-scope questions
-* Multi-turn conversations
-* Query rewriting
-
-### Retrieval Metrics
-
-```text
-Hit@5
-MRR
-Context Precision
-```
-
-### Generation Metrics
-
-```text
-Faithfulness
-Answer Relevance
-Citation Accuracy
-```
-
-### Safety / Behavior Metrics
-
-```text
-Intent Accuracy
-Refusal Accuracy
-Invalid Citations
-Query Rewrite Hits
-```
-
-### Performance Metrics
-
-```text
-Latency P50
-Latency P95
-```
-
----
-
-## Evaluation Variants
-
-The evaluation harness supports four configurations:
-
-```bash
-python -m evals.run_eval --variant vector
-```
-
-```bash
-python -m evals.run_eval --variant hybrid
-```
-
-```bash
-python -m evals.run_eval --variant hybrid_rr --rerank local
-```
-
-```bash
-python -m evals.run_eval --variant full --rerank local
-```
-
-For fast iteration without LLM judges:
-
-```bash
-python -m evals.run_eval --variant full --rerank local --fast
-```
-
-Results are appended to:
-
-```text
-evals/results.md
-```
-
-This makes it possible to compare retrieval and generation configurations using the same dataset.
+## Core Capabilities
+
+| Capability | What it does |
+|---|---|
+| **RAG** | Retrieves from Qdrant; separates public vs. internal docs by role so customers never see agent-only knowledge |
+| **Conversation memory** | Rolling summary (entities, order/ticket IDs, actions taken) + recent messages, instead of unbounded context growth |
+| **Query rewriting** | Resolves "that order" / "can I cancel it?" into a self-contained retrieval query using summary + recent turns |
+| **Tool calling** | Typed tools with schemas, validation, preflight checks, and risk levels — not arbitrary code execution |
+| **Human approval** | High-risk actions (e.g. order cancellation) are proposed, not executed; state is **re-validated at approval time**, not just at proposal time |
+| **Ticket intelligence** | Best-effort LLM classification (`damaged_item`, `billing`, etc.) — failure here never blocks ticket creation |
+| **PII minimization** | Card/email/phone data is masked before it reaches storage, the LLM, or Langfuse — the app decides what's safe, not the model |
+| **Semantic cache** | Embedding-similarity cache scoped by tenant/role, invalidated on re-ingestion |
+| **Evaluation harness** | Golden dataset + variant comparison (`--variant hybrid`, `--variant full --rerank local`); **cache is disabled during eval** so results aren't contaminated |
+| **Observability** | Langfuse traces per request: route taken, retrieved docs, tool calls, latency per stage, token usage |
+| **Model routing** | Configurable simple/full model split, falls back to the default model if simple isn't configured |
+| **Streaming** | SSE endpoint (`/api/chat/stream`) emitting `stage` / `delta` / `tool` / `final` events over the same orchestration path as the non-streaming API |
 
 ---
 
 ## Tech Stack
 
-| Component              | Technology                                   |
-| ---------------------- | -------------------------------------------- |
-| API                    | FastAPI                                      |
-| Language               | Python                                       |
-| LLM Interface          | OpenAI-compatible Chat Completions           |
-| LLM Providers          | Gemini / Groq / OpenAI / OpenRouter / Ollama |
-| Embeddings             | Sentence Transformers                        |
-| Vector Database        | Qdrant                                       |
-| Lexical Search         | BM25                                         |
-| Retrieval Fusion       | Reciprocal Rank Fusion                       |
-| Reranking              | Cross-Encoder / Cohere                       |
-| Database               | SQLite                                       |
-| Cache / Infrastructure | Redis                                        |
-| Validation             | Pydantic                                     |
-| Evaluation             | Custom LLM-as-Judge                          |
-| Testing                | Pytest                                       |
-| Deployment             | Docker Compose                               |
+FastAPI · Python · Google Gemini · Sentence Transformers · Qdrant · Redis · SQLite/PostgreSQL · Langfuse · Streamlit · Docker Compose · Pytest
+
+---
+
+## API
+
+```
+GET  /health
+POST /api/chat
+POST /api/chat/stream            (SSE)
+POST /api/actions/{id}/approve
+POST /api/actions/{id}/reject
+POST /api/feedback               (linked to Langfuse trace)
+POST /api/ingest?data_dir=data&tenant_id=acme
+GET  /api/stats
+```
+
+---
+
+## Running Locally
+
+```powershell
+git clone https://github.com/Aryan-sagar/ResolveAI.git
+cd ResolveAI
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+Create `.env` from `.env.example` (never commit real keys):
+
+```env
+LLM_PROVIDER=gemini
+GEMINI_API_KEY=your_key_here
+QDRANT_URL=http://localhost:6333
+DATABASE_URL=sqlite:///./supportops.db
+LANGFUSE_HOST=https://cloud.langfuse.com
+LANGFUSE_PUBLIC_KEY=your_key_here
+LANGFUSE_SECRET_KEY=your_key_here
+```
+
+```powershell
+docker compose up -d          # Qdrant, Redis, PostgreSQL, Langfuse
+python -m uvicorn app.main:app --reload     # http://127.0.0.1:8000/docs
+python data/make_kb.py
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/ingest?data_dir=data&tenant_id=acme" -Method POST
+```
+
+---
+
+## What I Tested
+
+Not just happy paths — failure boundaries:
+
+- **Retrieval**: public vs. internal access control, citation correctness, role-based restrictions
+- **Memory**: rolling summaries, query rewriting, cross-turn reference resolution
+- **Tools**: order lookup, cancellation preflight, approval, rejection, **re-validation before execution**
+- **Evaluation**: variant comparisons with cache explicitly bypassed
+- **Observability**: trace creation, stage spans, tool spans, token usage metadata
+- **Infra**: Docker Compose, Qdrant, Redis, PostgreSQL, local dev loop
+
+---
+
+## Where It Breaks (and what I'd do about it)
+
+Being honest about gaps is the point of this section — a system isn't production-ready because it demos well.
+
+**LLM provider quotas.** Gemini free tier hit `429 RESOURCE_EXHAUSTED` during dev. Not an app bug — needs retry/backoff, provider fallback, and real rate limiting, which the provider abstraction was built to support.
+
+**Observability SDK drift.** An earlier version used `client.trace(...)` against a Langfuse SDK that had moved on. Lesson: third-party observability code is part of the production dependency surface and needs version pinning, not assumed compatibility.
+
+**Local Langfuse vs. Langfuse Cloud.** The local Docker deployment and installed SDK didn't line up cleanly, so the project runs against Langfuse Cloud instead. A real deployment should pin and test the full `app → SDK → API → dashboard` chain explicitly.
+
+**Streaming is the least mature path.** More moving parts than the normal request path — partial output, tool-call fragments across chunks, provider/client disconnects. Needs dedicated lifecycle handling and integration tests before I'd trust it in prod.
+
+**Semantic cache is approximate.** Similar questions can still need different answers (different order/user/role/policy/date). Cache stays scoped and conservative; next step is stronger cache-key metadata and KB-version-based invalidation.
+
+**RAG quality is bounded by retrieval quality.** Bad chunking → bad embeddings → wrong context → wrong answer, regardless of model quality. Next: hybrid BM25 + vector retrieval, better chunking, retrieval-specific eval metrics.
+
+**Citations aren't fully grounded.** The model can produce a plausible-looking citation that doesn't match retrieved evidence. The fix is architectural, not prompting: pass explicit chunk IDs into the model and validate citations against them deterministically, rather than trusting model output.
+
+**Known gaps, not hidden ones:** auth/RBAC, prod DB migrations, distributed task processing, provider failover, distributed caching, vector index versioning, load testing, adversarial prompt testing, CI/CD regression evals.
+
+---
+
+## Engineering Lessons
+
+1. **The LLM is one component, not the architecture.** It's `LLM + retrieval + state + tools + permissions + validation + observability + evaluation`, not `prompt → LLM → answer`.
+2. **Tool authorization belongs outside the model.** A model can *request* an action; deterministic application code decides if it's *allowed*.
+3. **Evaluation infra matters as much as prompt quality.** A better prompt means nothing if cache or retrieval config contaminates the comparison.
+4. **Observability is part of the product**, not an add-on — when an answer is wrong, I need to see the route, retrieval, tool calls, model, and token cost that produced it.
+5. **Failure handling is a feature.** Provider quotas, retrieval misses, malformed output, and observability outages are normal operating conditions, not edge cases.
 
 ---
 
 ## Project Structure
 
 ```text
-resolve-ai/
-│
-├── app/
-│   ├── core/
-│   │   ├── embeddings.py
-│   │   ├── guardrails.py
-│   │   ├── llm.py
-│   │   ├── router.py
-│   │   └── vectorstore.py
-│   │
-│   ├── db/
-│   │   ├── models.py
-│   │   └── session.py
-│   │
-│   ├── schemas/
-│   │   └── chat.py
-│   │
-│   ├── services/
-│   │   ├── ingestion.py
-│   │   ├── query_rewriter.py
-│   │   ├── reranker.py
-│   │   ├── retrieval.py
-│   │   └── orchestrator.py
-│   │
-│   └── main.py
-│
-├── data/
-│   ├── password_reset.md
-│   ├── refund_policy.md
-│   ├── returns_exchange.md
-│   └── shipping_faq.md
-│
-├── evals/
-│   ├── golden_dataset.csv
-│   ├── metrics.py
-│   └── run_eval.py
-│
-├── docker-compose.yml
-├── requirements.txt
-├── .env.example
-└── README.md
+app/
+├── api/          chat, ingest, tickets, orders, eval, stats
+├── core/         llm, rag, router, tools, guardrails, observability
+├── services/     ingestion, retrieval, reranker, memory, semantic_cache,
+│                 query_rewriter, ticket_intel, orchestrator
+├── db/           models, session
+└── schemas/
+data/             faqs, internal, policies, products, make_kb.py
+evals/            golden_dataset.csv, scenarios.json, run_eval.py
+frontend/         app.py (user), admin.py
+docker-compose.yml · requirements.txt · .env.example
 ```
-
----
-
-## Getting Started
-
-### 1. Clone
-
-```bash
-git clone https://github.com/<your-username>/resolve-ai.git
-cd resolve-ai
-```
-
-### 2. Create a virtual environment
-
-Windows:
-
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-```
-
-Linux/macOS:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-```
-
-### 3. Install dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-### 4. Configure environment
-
-Create `.env` from `.env.example`.
-
-Example:
-
-```env
-LLM_PROVIDER=gemini
-GEMINI_API_KEY=your_key_here
-LLM_MODEL=gemini-3.6-flash
-
-JUDGE_PROVIDER=groq
-GROQ_API_KEY=your_key_here
-JUDGE_MODEL=llama-3.3-70b-versatile
-
-EMBEDDING_PROVIDER=local
-RERANK_PROVIDER=local
-
-QDRANT_URL=http://localhost:6333
-REDIS_URL=redis://localhost:6379
-DATABASE_URL=sqlite:///./supportops.db
-```
-
-Never commit `.env` or API keys.
-
-### 5. Start infrastructure
-
-```bash
-docker compose up -d
-```
-
-Verify:
-
-```bash
-docker compose ps
-```
-
-### 6. Ingest the knowledge base
-
-```bash
-python -c "from app.services.ingestion import ingest_directory; print(ingest_directory('data', tenant_id='acme'))"
-```
-
-### 7. Start the API
-
-```bash
-uvicorn app.main:app --reload
-```
-
-Health check:
-
-```text
-GET http://127.0.0.1:8000/health
-```
-
----
-
-## Example
-
-### Request
-
-```http
-POST /api/chat
-Content-Type: application/json
-```
-
-```json
-{
-  "query": "What is your refund policy for damaged items?"
-}
-```
-
-### Response
-
-```json
-{
-  "conversation_id": "conv_xxxxx",
-  "answer": "According to our refund policy...",
-  "intent": "policy_question",
-  "rewritten_query": "What is your refund policy for damaged items?",
-  "citations": [
-    {
-      "source": "refund_policy.md",
-      "score": 0.0328
-    }
-  ],
-  "invalid_citations": [],
-  "requires_approval": false,
-  "latency_ms": 6386
-}
-```
-
----
-
-## Engineering Decisions
-
-### Why hybrid retrieval?
-
-Dense retrieval handles semantic similarity while BM25 handles exact terms such as:
-
-```text
-ORD123
-refund
-password
-7 days
-```
-
-Combining both gives a stronger baseline than relying on either method independently.
-
-### Why rerank?
-
-RRF determines which documents are strong candidates based on agreement between retrieval systems. It is not itself a fine-grained relevance model.
-
-The reranker therefore operates on a smaller candidate pool:
-
-```text
-Retrieval → Top 20 → Cross Encoder → Top 5
-```
-
-This improves relevance while controlling inference cost.
-
-### Why custom evaluation instead of RAGAS?
-
-The evaluation system needs:
-
-* per-claim faithfulness debugging
-* fewer judge calls
-* minimal dependency overhead
-* direct integration with the project's response schema
-
-The implementation follows RAGAS-style concepts while keeping the evaluation pipeline project-specific.
-
-### Why human approval?
-
-LLMs should not autonomously execute irreversible or financially sensitive actions without an explicit authorization boundary.
-
-ResolveAI separates:
-
-```text
-Reasoning
-   ↓
-Proposal
-   ↓
-Approval
-   ↓
-Execution
-```
-
----
-
-## Current Limitations
-
-This project intentionally uses lightweight local infrastructure for development.
-
-Current limitations include:
-
-* SQLite is used for the application database
-* BM25 index is rebuilt from application data
-* Tool implementations are local/mock support systems
-* LLM latency depends on the selected provider
-* Local reranking is CPU-bound
-* Production authentication and authorization are simplified
-* Evaluation scores depend on the selected judge model
-
-These are deliberate trade-offs for a portfolio/development implementation and provide clear upgrade paths for production deployment.
 
 ---
 
 ## Roadmap
 
-* [ ] PostgreSQL production database
-* [ ] Redis-backed conversation/session state
-* [ ] Streaming responses
-* [ ] Production authentication and RBAC
-* [ ] Async tool execution
-* [ ] Distributed task processing
-* [ ] Better observability with OpenTelemetry
-* [ ] Prometheus/Grafana metrics
-* [ ] Automated regression evaluation in CI
-* [ ] Production vector-index versioning
-* [ ] More comprehensive adversarial evaluation
-* [ ] Kubernetes deployment
+**Near term:** finish Langfuse Cloud verification, token usage aggregation, feedback→scoring, streaming integration tests, admin dashboard, automated regression eval.
+
+**Production hardening:** Postgres-first config, Redis-backed distributed cache, auth/RBAC, rate limiting, provider failover, background ingestion, stronger citation grounding, KB versioning, load testing, CI/CD eval gates.
 
 ---
 
-## License
+## The Point
 
-MIT License
+Anyone can get an LLM to answer "what's your refund policy?" The real questions are whether it retrieves the *right* policy, avoids leaking internal info, remembers five messages back, safely touches an order system, stops before a destructive action, and is debuggable when it's wrong.
+
+I'd rather be able to say **"I built it, I know where it breaks, and I know what I'd change"** than claim it's finished.
