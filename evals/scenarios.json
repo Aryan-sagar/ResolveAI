@@ -1,0 +1,59 @@
+[
+  {
+    "name": "cancel_eligible_parks_for_approval",
+    "query": "Please cancel my order ORD789, I changed my mind.",
+    "history": [],
+    "expect": {"intent": "cancel_request",
+               "tools": {"get_order_status": "success", "cancel_order": "pending_approval"},
+               "args": {"cancel_order": {"order_id": "ORD789"}},
+               "order_state": {"ORD789": "processing"}},
+    "judge": false
+  },
+  {
+    "name": "cancel_approval_executes",
+    "query": "Cancel order ORD789 please.",
+    "history": [],
+    "expect": {"tools": {"cancel_order": "pending_approval"},
+               "order_state": {"ORD789": "cancelled"}},
+    "approve": true,
+    "judge": false
+  },
+  {
+    "name": "cancel_rejection_leaves_order_unchanged",
+    "query": "Go ahead and cancel order ORD789.",
+    "history": [],
+    "expect": {"tools": {"cancel_order": "pending_approval"},
+               "order_state": {"ORD789": "processing"}},
+    "approve": false,
+    "judge": false
+  },
+  {
+    "name": "cancel_ineligible_delivered",
+    "query": "Cancel my order ORD123.",
+    "history": [],
+    "expect": {"no_approval": true, "order_state": {"ORD123": "delivered"}},
+    "judge": false
+  },
+  {
+    "name": "memory_via_rolling_summary",
+    "query": "Alright. On second thought, please go ahead and cancel it.",
+    "history": [
+      {"role": "user", "content": "Hi, I placed order ORD789 last week and I've changed my mind about it."},
+      {"role": "assistant", "content": "I can help with that. Order ORD789 (Desk Lamp, Rs. 850) is currently processing. Since it hasn't shipped, it can still be cancelled, but cancellation requires agent approval. Would you like me to start it?"},
+      {"role": "user", "content": "Not yet, let me think about it. By the way, how long does standard delivery take?"},
+      {"role": "assistant", "content": "Standard delivery typically takes 3-5 business days once the order ships."},
+      {"role": "user", "content": "And which courier do you use?"},
+      {"role": "assistant", "content": "We ship with Delhivery and BlueDart depending on your location."},
+      {"role": "user", "content": "What is your refund policy for damaged items?"},
+      {"role": "assistant", "content": "Damaged items are eligible for a full refund if reported within 7 days of delivery."},
+      {"role": "user", "content": "Okay, good to know."},
+      {"role": "assistant", "content": "Is there anything else I can help you with?"},
+      {"role": "user", "content": "How do I reset my password?"},
+      {"role": "assistant", "content": "You can reset your password from the login page using the Forgot password link."}
+    ],
+    "expect": {"tools": {"cancel_order": "pending_approval"},
+               "args": {"cancel_order": {"order_id": "ORD789"}}},
+    "requires": "rewrite",
+    "judge": false
+  }
+]

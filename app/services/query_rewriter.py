@@ -8,10 +8,13 @@ Rules:
 - If the message is already standalone, return it unchanged.
 - Output ONLY the rewritten query text. No quotes, no explanation."""
 
-def rewrite_query(query: str, history: list[dict]) -> str:
-    if not history:
+def rewrite_query(query: str, history: list[dict], summary: str | None = None) -> str:
+    if not history and not summary:
         return query
-    messages = [{"role": "system", "content": REWRITER_SYSTEM}]
+    system = REWRITER_SYSTEM
+    if summary:
+        system += f"\n\nConversation summary (use it to resolve references):\n{summary}"
+    messages = [{"role": "system", "content": system}]
     for m in history[-6:]:
         messages.append({"role": m["role"], "content": m["content"]})
     messages.append({"role": "user", "content": f"Rewrite this for retrieval:\n{query}"})
