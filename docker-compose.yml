@@ -6,5 +6,23 @@ services:
   redis:
     image: redis:7-alpine
     ports: ["6379:6379"]
+  langfuse:
+    image: langfuse/langfuse:2
+    ports: ["3000:3000"]
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@langfuse-db:5432/langfuse
+      NEXTAUTH_URL: http://localhost:3000
+      NEXTAUTH_SECRET: change-me-please
+      SALT: change-me-too
+      TELEMETRY_ENABLED: "false"
+    depends_on: [langfuse-db]
+  langfuse-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: langfuse
+    volumes: [langfuse_pg:/var/lib/postgresql/data]
 volumes:
+  langfuse_pg:
   qdrant_data:
