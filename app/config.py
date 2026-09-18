@@ -49,5 +49,12 @@ class Settings(BaseSettings):
     langfuse_secret_key: str = ""
     langfuse_host: str = "http://localhost:3000"
 
+    # semantic cache
+    cache_enabled: bool = True
+    cache_threshold: float = 0.92      # bge-small paraphrase sims cluster ~0.9+; tune with the near-miss log
+    cache_max_entries: int = 500
+
+    # model routing (empty = disabled; keep empty for comparable eval runs)
+    llm_model_simple: str = ""
     
 settings = Settings()
