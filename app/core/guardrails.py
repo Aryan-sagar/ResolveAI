@@ -11,9 +11,22 @@ INJECTION_PATTERNS = [
 
 PII_PATTERNS = {
     "email": r"[\w.+-]+@[\w-]+\.[\w.]+",
-    "phone": r"\+?\d[\d\s\-]{8,}\d",
-    "card":  r"\b(?:\d[ -]?){13,16}\b",
+    "phone": r"\b(?:\+91[\s-]?)?[6-9]\d{9}\b",          # Indian mobile; won't match dates/IDs
+    "card":  r"\b\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}\b", # 16-digit groups only
 }
+
+def detect_pii(text: str) -> list[str]:
+    return [k for k, p in PII_PATTERNS.items() if re.search(p, text)]
+
+def mask_for_llm(text: str) -> str:
+    return re.sub(PII_PATTERNS["card"], "[CARD-REDACTED]", text)
+
+def mask_for_storage(text: str) -> str:
+    out = text
+    out = re.sub(PII_PATTERNS["card"], "[CARD-REDACTED]", out)
+    out = re.sub(PII_PATTERNS["email"], "[EMAIL]", out)
+    out = re.sub(PII_PATTERNS["phone"], "[PHONE]", out)
+    return out
 
 def check_input(text: str) -> dict:
     for p in INJECTION_PATTERNS:
