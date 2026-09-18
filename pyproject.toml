@@ -1,0 +1,11 @@
+[tool.ruff]
+line-length = 140
+target-version = "py311"
+
+[tool.ruff.lint]
+# start with serious problems only (syntax errors, undefined names);
+# tighten to full pyflakes after the cleanup commit
+select = ["E9", "F82"]
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
