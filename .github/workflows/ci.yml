@@ -23,6 +23,6 @@ jobs:
           path: ~/.cache/huggingface
           key: hf-${{ runner.os }}
       - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
-      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: pip install -r requirements.txt
       - run: ruff check app evals
       - run: pytest tests/ -q
